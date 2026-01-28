@@ -143,7 +143,7 @@ This document serves as a central backlog for all pending changes, new features,
         - `DragonShield iOS/Views/Todos/TodoBoardView.swift`: replace `dbManager.todoBoardFontSize` and `dbManager.$todoBoardFontSize` with `preferences.todoBoardFontSize` and `preferences.$todoBoardFontSize`.
         - Verify any remaining `dbManager.*` preference usage is eliminated (rg for `dbManager.(dbVersion|todoBoardFontSize)`).
         - (Optional) Remove deprecated `@Published` preference fields from `DatabaseManager` once all call sites are migrated.
-    Doc: docs/ds-062-database-manager-responsibility-split.md
+    Doc: docs/specs/ds-062-database-manager-responsibility-split.md
     Tested: confirmed by user.
 - [x] [new_features] **[DS-086] Sidebar Menu Manual Reordering** (2026-01-04)
     Why: Users want to customize the sidebar order to match their workflow without changing the existing category structure.
@@ -266,7 +266,7 @@ This document serves as a central backlog for all pending changes, new features,
 - [x] [changes] **[DS-062] Design Issue: DatabaseManager Mixing Persistence and UI State** (2025-12-22)
     Why: Database connection logic, domain queries, and UI/table preferences live in the same type, which creates tight coupling and makes testing and maintenance harder.
     What: Split into a focused DB connection/repository layer plus a separate settings/preferences store; move UI table preferences out of `DatabaseManager` and update call sites to use the new services.
-    Doc: docs/ds-062-database-manager-responsibility-split.md
+    Doc: docs/specs/ds-062-database-manager-responsibility-split.md
 
 - [x] [changes] **[DS-067] Upgrade Historic Performance Graph** (2025-12-25)
     Why: The historic performance chart is hard to inspect over longer periods and doesn’t surface values on hover.

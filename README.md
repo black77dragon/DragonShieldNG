@@ -17,7 +17,7 @@ For detailed interface guidelines, see the [Dragon Shield UI/UX Design Guide](Dr
 - **Import & maintenance tooling**: Python utilities parse CSV/XLSX/PDF statements (e.g. Credit Suisse), refresh FX & instrument prices, and perform encrypted database backup/restore. Settings export also generates the read-only SQLite snapshot used by the iOS viewer prototype.
 
 ### In Design / Planned
-- Alerts timeline narrative mode and AI-assisted summaries (`docs/new_alerts_timeline_tab.md`).
+- Alerts timeline narrative mode and AI-assisted summaries (`docs/design/new_alerts_timeline_tab.md`).
 - Ichimoku Dragon momentum scanner pipeline (`docs/IchimokuDragon/`).
 - Touch ID-secured key management & notarised macOS build.
 - Options valuation models and what-if rebalancing.
@@ -48,7 +48,7 @@ Highlights from the latest iterations:
 - Database tooling: dbmate migrations, encrypted backup/restore, import sessions, and Settings → Data Export snapshot for the iOS viewer prototype.
 
 ### In Progress
-- CSV/XLSX import refinement and alert timeline UX follow-up (`docs/new_alerts_timeline_tab.md`).
+- CSV/XLSX import refinement and alert timeline UX follow-up (`docs/design/new_alerts_timeline_tab.md`).
 - Research spikes for the Ichimoku Dragon scanner (models/services under `DragonShield/Ichimoku`).
 
 ### Next Up
@@ -79,9 +79,13 @@ DragonShield/
 ├── DragonShield iOS/                # Designed-for-iPad viewer target (snapshot import prototype)
 ├── DragonShieldTests/               # XCTest target (floating picker, autosave table, data access)
 ├── Model/                           # Shared Swift model definitions
-├── docs/                            # Architecture notes, design proposals, release notes
-│   └── IchimokuDragon/              # Ichimoku momentum scanner documentation
-├── DragonShield/docs/               # Legacy documentation set (UI guide, troubleshooting)
+├── docs/                            # Repo-level docs (design/specs/process, releases)
+│   ├── design/                      # UI/UX designs, mockups, proposals
+│   ├── specs/                       # Feature and system specs
+│   ├── process/                     # Release/build/checklist notes
+│   ├── IchimokuDragon/              # Ichimoku momentum scanner documentation
+│   └── releases/                    # Release briefs
+├── DragonShield/docs/               # Tooling-pinned docs (manifested)
 ├── scripts/                         # Repo tooling (release sync, git info, CI, ds helper)
 ├── CHANGELOG.md
 ├── README.md
@@ -92,7 +96,9 @@ Note: runtime Python scripts used by the app are bundled under `DragonShield/pyt
 Repo tooling (release/CI/helpers) lives under `scripts/`.
 
 Additional references:
+- `docs/README.md` is the index for repo-level documentation.
 - `docs/releases/` retains release briefs (latest: `4.7.1.md`).
+- `docs/design/`, `docs/specs/`, and `docs/process/` organize repo-level notes by intent.
 - `DragonShield/docs/UX_UI_concept/dragon_shield_ui_guide.md` covers detailed UI/UX conventions.
 - `new_features.md` (a.k.a. "New_Feature.Md") tracks the backlog of planned changes and upcoming work.
 
