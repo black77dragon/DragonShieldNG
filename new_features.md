@@ -91,6 +91,11 @@ This document serves as a central backlog for all pending changes, new features,
 
 ## Implemented
 
+- [x] [changes] **[DS-101] Dashboard Tile Title Renames** (2026-01-28)
+    Why: The current Dashboard tile titles are inconsistent and include a typo, which makes the tiles feel less polished.
+    What: Rename the Dashboard tile "Instruments without Theme" to "Instrument not part of a Portfolio" and rename the "Portfolio Themes" tile to "Portfolios".
+    Tested: not confirmed by user.
+
 - [x] [bugs] **[DS-100] Price Update Manual Mode Not Persisting** (2026-01-28)
     Why: Switching an instrument from Auto to Manual in the Price Update GUI does not persist, so on the next load it flips back to Auto and prompts for a provider again.
     What: When a row is switched to Manual, disable all InstrumentPriceSource entries for that instrument (enabled = 0) so the mode persists across restarts while retaining the last provider/external ID for later reuse.

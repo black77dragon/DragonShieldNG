@@ -290,7 +290,7 @@ struct ThemesOverviewTile: DashboardTile {
 
     init() {}
     static let tileID = "themes_overview"
-    static let tileName = "Portfolio Themes"
+    static let tileName = "Portfolios"
     static let iconName = "square.grid.2x2"
 
     var body: some View {

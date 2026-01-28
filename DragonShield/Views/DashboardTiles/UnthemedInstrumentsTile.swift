@@ -27,7 +27,7 @@ final class UnthemedInstrumentsTileViewModel: ObservableObject {
 struct UnthemedInstrumentsTile: DashboardTile {
     init() {}
     static let tileID = "unthemedInstruments"
-    static let tileName = "Instruments Without Theme"
+    static let tileName = "Instrument not part of a Porfolio"
     static let iconName = "square.fill.on.square.fill"
 
     @EnvironmentObject var dbManager: DatabaseManager
