@@ -73,7 +73,7 @@ This example creates a new database file named `new_database.sqlite` and applies
 #!/usr/bin/env zsh -f
 set -euo pipefail
 
-export DRAGONSHIELD_HOME="/absolute/path/to/DragonShield"
+export DRAGONSHIELD_HOME="/absolute/path/to/DragonShieldNG"
 export DATABASE_URL="sqlite:///$DRAGONSHIELD_HOME/new_database.sqlite"
 dbmate --migrations-dir "$DRAGONSHIELD_HOME/DragonShield/db/migrations" --url "$DATABASE_URL" up
 ```

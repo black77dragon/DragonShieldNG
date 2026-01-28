@@ -30,10 +30,27 @@ done
 cd "${HOME}" 2>/dev/null || cd /
 
 # Paths (allow override via DRAGONSHIELD_HOME)
-PROJECTS_DIR="${DRAGONSHIELD_HOME:-$HOME/Projects}"
-PROJECT_DIR="$PROJECTS_DIR/DragonShield"
+REPO_NAME="DragonShieldNG"
+DEFAULT_PROJECTS_DIR="$HOME/Projects"
+
+if [[ -n "${DRAGONSHIELD_HOME:-}" ]]; then
+  DRAGONSHIELD_BASE="$(basename "$DRAGONSHIELD_HOME")"
+  if [[ "$DRAGONSHIELD_BASE" == "$REPO_NAME" ]]; then
+    PROJECT_DIR="$DRAGONSHIELD_HOME"
+    PROJECTS_DIR="$(dirname "$PROJECT_DIR")"
+  elif [[ "$DRAGONSHIELD_BASE" == "DragonShield" ]]; then
+    PROJECTS_DIR="$(dirname "$DRAGONSHIELD_HOME")"
+    PROJECT_DIR="$PROJECTS_DIR/$REPO_NAME"
+  else
+    PROJECTS_DIR="$DRAGONSHIELD_HOME"
+    PROJECT_DIR="$PROJECTS_DIR/$REPO_NAME"
+  fi
+else
+  PROJECTS_DIR="$DEFAULT_PROJECTS_DIR"
+  PROJECT_DIR="$PROJECTS_DIR/$REPO_NAME"
+fi
 XCODE_PROJ="$PROJECT_DIR/DragonShield.xcodeproj"
-GIT_URL="https://github.com/black77dragon/DragonShield.git"
+GIT_URL="https://github.com/black77dragon/DragonShieldNG.git"
 
 mkdir -p "$PROJECTS_DIR"
 cd "$PROJECTS_DIR"
@@ -57,7 +74,6 @@ else
   echo "Switching to branch: $BRANCH"
   if git show-ref --verify --quiet "refs/heads/$BRANCH"; then
     git switch "$BRANCH"
-    # Try a fast-forward update if tracking is set
     git pull --ff-only || true
   elif git ls-remote --exit-code --heads origin "$BRANCH" &>/dev/null; then
     git switch --track -c "$BRANCH" "origin/$BRANCH"

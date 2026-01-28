@@ -468,7 +468,7 @@ TransactionTypes ←→ Transactions (1:N)
    #!/usr/bin/env zsh -f
    set -euo pipefail
 
-   export DRAGONSHIELD_HOME="/absolute/path/to/DragonShield"
+   export DRAGONSHIELD_HOME="/absolute/path/to/DragonShieldNG"
    export DATABASE_URL="sqlite:///$DRAGONSHIELD_HOME/dragonshield.db"
    dbmate --migrations-dir "$DRAGONSHIELD_HOME/DragonShield/db/migrations" --url "$DATABASE_URL" up
    ```

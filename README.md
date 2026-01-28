@@ -81,11 +81,15 @@ DragonShield/
 ├── Model/                           # Shared Swift model definitions
 ├── docs/                            # Architecture notes, design proposals, release notes
 │   └── IchimokuDragon/              # Ichimoku momentum scanner documentation
-├── DragonShield/docs/               # Legacy documentation set (UI guide, troubleshooting, scripts)
+├── DragonShield/docs/               # Legacy documentation set (UI guide, troubleshooting)
+├── scripts/                         # Repo tooling (release sync, git info, CI, ds helper)
 ├── CHANGELOG.md
 ├── README.md
 └── requirements.txt
 ```
+
+Note: runtime Python scripts used by the app are bundled under `DragonShield/python_scripts/`.
+Repo tooling (release/CI/helpers) lives under `scripts/`.
 
 Additional references:
 - `docs/releases/` retains release briefs (latest: `4.7.1.md`).
@@ -97,7 +101,7 @@ Additional references:
 1. **Clone the repository**
    ```bash
    git clone <your-repository-url>
-   cd DragonShield
+   cd DragonShieldNG
    ```
 
 2. **Create Python virtual environment (outside of the `DragonShield` app folder)**
