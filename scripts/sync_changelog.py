@@ -51,8 +51,8 @@ def load_tags():
 def fetch_github_releases(use_github, token):
     if not use_github:
         return {}
-    url = "https://api.github.com/repos/black77dragon/DragonShield/releases"
-    headers = {"User-Agent": "DragonShield-Changelog"}
+    url = "https://api.github.com/repos/black77dragon/DragonShieldNG/releases"
+    headers = {"User-Agent": "DragonShieldNG-Changelog"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = Request(url, headers=headers)
@@ -166,9 +166,9 @@ def parse_new_features(path, carry_forward_date):
 def search_pr_info_github(ds_id, token):
     url = (
         "https://api.github.com/search/issues?"
-        f"q=repo:black77dragon/DragonShield+\"{ds_id}\"+type:pr"
+        f"q=repo:black77dragon/DragonShieldNG+\"{ds_id}\"+type:pr"
     )
-    headers = {"User-Agent": "DragonShield-Changelog"}
+    headers = {"User-Agent": "DragonShieldNG-Changelog"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = Request(url, headers=headers)
