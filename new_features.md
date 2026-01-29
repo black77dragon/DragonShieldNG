@@ -14,6 +14,10 @@ This document serves as a central backlog for all pending changes, new features,
 
 ## Backlog
 
+- <mark>[*] [new_features] **[DS-103] Dashboard iOS Snapshot Button**</mark>
+    Why: Creating an iOS DB snapshot currently requires a manual workflow, which slows down quick backups before iPhone sync work.
+    What: Add an "iOS Snapshot (DB Copy for iPhone)" button to the Dashboard GUI, positioned alongside the existing buttons (FX Update, Price Update, Customizable Dashboard). The action must trigger the existing iOS snapshot/DB copy flow and surface the same success/error feedback as the current workflow.
+
 - <mark>[*] [new_features] **[DS-094] Portfolio Investment Thesis Framework**</mark>
     Why: Portfolio decisions need an explicit, maintained thesis that stays current without introducing a parallel review system.
     What: Introduce a generic Investment Thesis framework linked to every portfolio that captures core drivers, key risks, dashboards, and RAG-style scores/status. The thesis must be required for each portfolio, visible in portfolio views, and reusable across workflows. Extend the existing Weekly Macro & Portfolio Checklist to read and update thesis elements (instead of a separate thesis workflow), preserving a single source of truth with a clear history of thesis updates. Detailed specifications will be provided separately and should be incorporated before implementation.

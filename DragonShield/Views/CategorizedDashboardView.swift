@@ -45,6 +45,7 @@ struct CategorizedDashboardView: View {
     @State private var upcomingWeek: [(id: Int, name: String, date: String)] = []
     @State private var isUpdatingFx = false
     @State private var isUpdatingPrices = false
+    @State private var isExportingIOSSnapshot = false
     @State private var dashboardAlert: DashboardActionAlert?
     @State private var refreshToken = UUID()
     @State private var selectedCategory: DashboardCategory = .all
@@ -66,6 +67,7 @@ struct CategorizedDashboardView: View {
                 CustomToolbar(actions: [
                     ToolbarAction(icon: "arrow.triangle.2.circlepath", tooltip: "FX Update", isDisabled: isUpdatingFx, action: triggerFxUpdate),
                     ToolbarAction(icon: "chart.line.uptrend.xyaxis", tooltip: "Price Update", isDisabled: isUpdatingPrices, action: triggerPriceUpdate),
+                    ToolbarAction(icon: "iphone", tooltip: "iOS Snapshot (DB Copy for iPhone)", isDisabled: isExportingIOSSnapshot, action: triggerIOSSnapshot),
                     ToolbarAction(icon: "square.dashed.inset.filled", tooltip: "Customize Dashboard", action: { showingPicker = true })
                 ])
 
@@ -520,6 +522,45 @@ struct CategorizedDashboardView: View {
                     message: message
                 )
                 NotificationCenter.default.post(name: .dashboardPriceUpdateCompleted, object: nil)
+            }
+        }
+    }
+
+    private func triggerIOSSnapshot() {
+        if isExportingIOSSnapshot { return }
+        Task {
+            await MainActor.run { isExportingIOSSnapshot = true }
+            let service = IOSSnapshotExportService(dbManager: dbManager)
+            do {
+                let url = try service.exportNow()
+                let targetPath = url.deletingLastPathComponent().path
+                await MainActor.run {
+                    preferences.iosSnapshotTargetPath = targetPath
+                    _ = dbManager.configurationStore.upsertConfiguration(
+                        key: "ios_snapshot_target_path",
+                        value: targetPath,
+                        dataType: "string"
+                    )
+                    isExportingIOSSnapshot = false
+                    refreshDashboard()
+                    let message = dbManager.fetchLastSystemJobRun(jobKey: .iosSnapshotExport)?.message
+                        ?? "Exported \(url.lastPathComponent)."
+                    dashboardAlert = DashboardActionAlert(
+                        title: "iOS Snapshot Complete",
+                        message: message
+                    )
+                }
+            } catch {
+                let fallback = error.localizedDescription
+                await MainActor.run {
+                    isExportingIOSSnapshot = false
+                    refreshDashboard()
+                    let message = dbManager.fetchLastSystemJobRun(jobKey: .iosSnapshotExport)?.message ?? fallback
+                    dashboardAlert = DashboardActionAlert(
+                        title: "iOS Snapshot Failed",
+                        message: message
+                    )
+                }
             }
         }
     }

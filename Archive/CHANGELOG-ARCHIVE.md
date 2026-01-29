@@ -1,0 +1,36 @@
+# Changelog Archive
+
+Historical changelog entries for non-v1 releases are archived here.
+
+## [2.2.0] - 2026-01-28
+
+### Changed
+- [DS-101] Dashboard Tile Title Renames (implemented 2026-01-28)
+- [DS-099] Trading Profile Coordinate Slider Contrast Upgrade (implemented 2026-01-28)
+
+### Fixed
+- [DS-100] Price Update Manual Mode Not Persisting (implemented 2026-01-28)
+
+## [2.1.0] - 2026-01-28
+
+## [2025.10.18-rollback] - 2025-10-18
+
+## [4.7.2] - 2025-09-18
+
+## [4.7.1] - 2025-09-13
+
+## [4.7.0] - 2025-09-09
+
+## [1.7.0-ios] - 2025-09-05
+
+## [4.11] - 2025-09-02
+
+## [4.10] - 2025-08-30
+
+## [4.9] - 2025-08-28
+
+## [4.8] - 2025-08-26
+
+## [4.7] - 2025-08-24
+
+## [4.6.0] - 2025-06-15

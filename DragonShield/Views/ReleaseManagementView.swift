@@ -228,6 +228,9 @@ private struct PullRequestInfo {
     let number: Int
     let url: String
     let headSha: String
+    let headRef: String
+    let title: String
+    let body: String
     let state: String
     let mergeable: Bool?
     let mergeableState: String?
@@ -236,6 +239,10 @@ private struct PullRequestInfo {
 private struct ChecksSummary {
     let state: String
     let description: String
+    let failingChecks: [String]
+    let pendingChecks: [String]
+    let totalChecks: Int
+    let totalStatuses: Int
 }
 
 private struct ProcessSpineItem: Identifiable {
@@ -289,6 +296,9 @@ private final class ReleaseManagementModel: ObservableObject {
     @Published var branchPushed: Bool = false
     @Published var prInfo: PullRequestInfo?
     @Published var checksSummary: ChecksSummary?
+    @Published var allowMergeDespiteChecks: Bool = false
+    @Published var existingPRInfo: PullRequestInfo?
+    @Published var openPullRequests: [PullRequestInfo] = []
     @Published var prMerged: Bool = false
     @Published var branchDeleted: Bool = false
 }
@@ -343,7 +353,10 @@ struct ReleaseManagementRootView: View {
                                   onCreatePR: createPullRequest,
                                   onRefreshChecks: refreshPullRequestChecks,
                                   onMergePR: mergePullRequest,
-                                  onDeleteBranch: deleteBranch)
+                                  onDeleteBranch: deleteBranch,
+                                  onLoadExistingPR: loadExistingPullRequest,
+                                  onLoadPR: loadPullRequest,
+                                  onStartNewWorkflow: startNewWorkflow)
     }
 }
 
@@ -486,6 +499,9 @@ private struct ReleaseWorkflowDetailView: View {
     let onRefreshChecks: () -> Void
     let onMergePR: () -> Void
     let onDeleteBranch: () -> Void
+    let onLoadExistingPR: () -> Void
+    let onLoadPR: (PullRequestInfo) -> Void
+    let onStartNewWorkflow: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -776,6 +792,7 @@ private struct ReleaseWorkflowDetailView: View {
         let prReady = model.prInfo != nil
         let checksState = model.checksSummary?.state ?? "unknown"
         let checksOk = checksState == "success" || checksState == "none"
+        let overrideOk = checksState == "failure" && model.allowMergeDespiteChecks
         switch step {
         case .checkStatus:
             Button("Refresh") { onRefreshStatus() }
@@ -804,7 +821,7 @@ private struct ReleaseWorkflowDetailView: View {
         case .mergePR:
             Button("Merge") { onMergePR() }
                 .buttonStyle(.borderedProminent)
-                .disabled(isRunning || !prReady || !checksOk)
+                .disabled(isRunning || !prReady || !(checksOk || overrideOk))
         case .deleteBranch:
             Button("Delete") { onDeleteBranch() }
                 .buttonStyle(.bordered)
@@ -920,6 +937,15 @@ private struct ReleaseWorkflowDetailView: View {
                 "If it is dirty, you can resolve it right here before tagging."
             ])
             ResolveIssuesCard(issues: statusIssues)
+            ExistingWorkflowCard(existingPR: model.existingPRInfo,
+                                 openPRs: model.openPullRequests,
+                                 hasToken: model.systemStatus.githubTokenPresent,
+                                 currentBranch: model.systemStatus.currentBranch,
+                                 defaultBase: model.systemStatus.defaultBaseBranch,
+                                 isRunning: model.isRunning,
+                                 onContinue: onLoadExistingPR,
+                                 onContinueWithPR: onLoadPR,
+                                 onStartNew: onStartNewWorkflow)
             ReleaseIntentCard(isNewRelease: $model.isNewRelease,
                               version: $model.newVersion,
                               currentVersion: model.systemStatus.version,
@@ -1311,42 +1337,89 @@ private struct ReleaseWorkflowDetailView: View {
                 "A pull request is a request to merge your work into main."
             ])
             card {
-                if !branchRequired {
-                    StatusPill(level: .info, text: "OPTIONAL")
-                    Text("No local changes detected. You can continue without opening a PR.")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                TextField("PR title", text: $model.prTitle)
-                    .textFieldStyle(.roundedBorder)
-                TextEditor(text: $model.prBody)
-                    .frame(minHeight: 120)
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
-                HStack {
-                    Button("Create PR") {
-                        onCreatePR()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .disabled(model.prTitle.isEmpty || model.isRunning || !canOpenPR)
-                    Spacer()
-                    Button("Continue") {
-                        onAdvanceRelease()
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(model.isRunning || !canAdvanceReleaseStep)
-                }
-                if branchRequired && model.prInfo == nil {
-                    BlockerHint(text: "Create the pull request before continuing.")
-                }
-                if branchRequired && !canOpenPR {
-                    BlockerHint(text: model.systemStatus.githubTokenPresent ? "Push the branch before creating a PR." : "Set GITHUB_TOKEN before creating a PR.")
-                }
-                if let prInfo = model.prInfo {
-                    Text("PR created: #\(prInfo.number)")
+                if let pr = model.prInfo {
+                    StatusPill(level: .info, text: "PR ALREADY EXISTS")
+                    Text("Using existing PR #\(pr.number)")
                         .font(.subheadline)
-                    Text(prInfo.url)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                    if !pr.title.isEmpty {
+                        Text(pr.title)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if !pr.body.isEmpty {
+                        Text(pr.body)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    HStack {
+                        Button("Continue to Merge") {
+                            onAdvanceRelease()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        Spacer()
+                    }
+                } else {
+                    if let existing = model.existingPRInfo {
+                        StatusPill(level: .info, text: "PR FOUND")
+                        Text("An open PR already exists for this branch. Load it to continue.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        if !existing.title.isEmpty {
+                            Text(existing.title)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        if !existing.body.isEmpty {
+                            Text(existing.body)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        HStack {
+                            Button("Load Existing PR") {
+                                onLoadExistingPR()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            Spacer()
+                        }
+                    } else {
+                        if !branchRequired {
+                            StatusPill(level: .info, text: "OPTIONAL")
+                            Text("No local changes detected. You can continue without opening a PR.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        TextField("PR title", text: $model.prTitle)
+                            .textFieldStyle(.roundedBorder)
+                        TextEditor(text: $model.prBody)
+                            .frame(minHeight: 120)
+                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(Color.gray.opacity(0.2)))
+                        HStack {
+                            Button("Create PR") {
+                                onCreatePR()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(model.prTitle.isEmpty || model.isRunning || !canOpenPR)
+                            Spacer()
+                            Button("Continue") {
+                                onAdvanceRelease()
+                            }
+                            .buttonStyle(.bordered)
+                            .disabled(model.isRunning || !canAdvanceReleaseStep)
+                        }
+                        if branchRequired && model.prInfo == nil {
+                            BlockerHint(text: "Create the pull request before continuing.")
+                        }
+                        if branchRequired && !canOpenPR {
+                            BlockerHint(text: model.systemStatus.githubTokenPresent ? "Push the branch before creating a PR." : "Set GITHUB_TOKEN before creating a PR.")
+                        }
+                        if let prInfo = model.prInfo {
+                            Text("PR created: #\(prInfo.number)")
+                                .font(.subheadline)
+                            Text(prInfo.url)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
             }
         }
@@ -1355,11 +1428,14 @@ private struct ReleaseWorkflowDetailView: View {
     private var branchMergeView: some View {
         let checksState = model.checksSummary?.state ?? "unknown"
         let checksOk = checksState == "success" || checksState == "none"
+        let hasFailures = checksState == "failure"
         let branchRequired = needsBranchSteps
+        let failedNames = model.checksSummary?.failingChecks ?? []
+        let pendingNames = model.checksSummary?.pendingChecks ?? []
         return VStack(alignment: .leading, spacing: DSLayout.spaceM) {
             workflowInfoCard(title: "What this does", lines: [
                 "Merges the PR using squash (one clean commit on main).",
-                "If checks fail, the merge will be blocked."
+                "If checks fail, the merge will be blocked unless you override it."
             ])
             card {
                 if !branchRequired {
@@ -1368,10 +1444,36 @@ private struct ReleaseWorkflowDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                let checksLevel: StatusLevel = checksState == "success" ? .ok : (checksState == "none" ? .info : .warning)
+                let checksLevel: StatusLevel = checksOk ? .ok : (hasFailures ? .error : .warning)
                 StatusPill(level: checksLevel, text: "CHECKS: \(checksState.uppercased())")
                 if let summary = model.checksSummary {
                     Text(summary.description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if hasFailures {
+                    let count = failedNames.count
+                    let countText = count == 1 ? "1 check" : "\(count) checks"
+                    Text("GitHub reports \(countText) failing: \(failedNames.joined(separator: ", "))")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                    Text("Resolve the \(countText) on GitHub, then refresh checks.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Toggle("I understand the checks failed and want to attempt the merge anyway.", isOn: $model.allowMergeDespiteChecks)
+                        .toggleStyle(.switch)
+                    Text("Warning: GitHub may still block the merge if branch protection requires passing checks.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else if checksState == "pending" {
+                    let count = pendingNames.count
+                    if count > 0 {
+                        let countText = count == 1 ? "1 check" : "\(count) checks"
+                        Text("GitHub reports \(countText) still running: \(pendingNames.joined(separator: ", "))")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Text("Wait for checks to finish, then refresh.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1385,7 +1487,7 @@ private struct ReleaseWorkflowDetailView: View {
                         onMergePR()
                     }
                     .buttonStyle(.borderedProminent)
-                    .disabled(!checksOk)
+                    .disabled(!(checksOk || (hasFailures && model.allowMergeDespiteChecks)))
                     Spacer()
                     Button("Continue") {
                         onAdvanceRelease()
@@ -1394,8 +1496,7 @@ private struct ReleaseWorkflowDetailView: View {
                     .disabled(model.isRunning || !canAdvanceReleaseStep)
                 }
                 if branchRequired && !model.prMerged {
-                    let blocker = checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge."
-                    BlockerHint(text: blocker)
+                    BlockerHint(text: checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge.")
                 }
                 if model.prMerged {
                     Text("Merged successfully.")
@@ -1782,6 +1883,107 @@ private struct ResolveIssuesCard: View {
     }
 }
 
+private struct ExistingWorkflowCard: View {
+    let existingPR: PullRequestInfo?
+    let openPRs: [PullRequestInfo]
+    let hasToken: Bool
+    let currentBranch: String
+    let defaultBase: String
+    let isRunning: Bool
+    let onContinue: () -> Void
+    let onContinueWithPR: (PullRequestInfo) -> Void
+    let onStartNew: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: DSLayout.spaceS) {
+            Text("Existing workflow detected")
+                .font(.headline)
+            if isRunning {
+                HStack(spacing: 6) {
+                    ProgressView()
+                        .scaleEffect(0.7)
+                    Text("Loading PR details…")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            if currentBranch == "-" || currentBranch.isEmpty || currentBranch == defaultBase {
+                if openPRs.isEmpty {
+                    Text("No feature branch detected. Start a new workflow to create a branch and PR.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("Open pull requests found in GitHub. Choose one to continue or start a new workflow.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    ForEach(openPRs.prefix(3), id: \.number) { pr in
+                        HStack(spacing: 8) {
+                            Text("#\(pr.number)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(pr.headRef.isEmpty
+                                 ? (pr.title.isEmpty ? pr.url : pr.title)
+                                 : "\(pr.headRef) • \(pr.title.isEmpty ? pr.url : pr.title)")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Spacer()
+                            Button("Continue") {
+                                onContinueWithPR(pr)
+                            }
+                            .buttonStyle(.borderedProminent)
+                        }
+                    }
+                }
+            } else if !hasToken {
+                Text("Feature branch detected (\(currentBranch)), but a GitHub token is required to check for open PRs.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else if let existingPR {
+                Text("Open PR found for branch \(currentBranch): #\(existingPR.number)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !existingPR.title.isEmpty {
+                    Text(existingPR.title)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !existingPR.body.isEmpty {
+                    Text(existingPR.body)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text(existingPR.url)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button("Continue with existing PR") {
+                        onContinue()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    Button("Start new workflow") {
+                        onStartNew()
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+            } else {
+                Text("Feature branch detected (\(currentBranch)). No open PR found.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 8) {
+                    Button("Start new workflow") {
+                        onStartNew()
+                    }
+                    .buttonStyle(.bordered)
+                    Spacer()
+                }
+            }
+        }
+        .padding(DSLayout.spaceM)
+        .background(RoundedRectangle(cornerRadius: DSLayout.radiusL).fill(Surface.secondary))
+    }
+}
+
 private struct ReleaseIntentCard: View {
     @Binding var isNewRelease: Bool
     @Binding var version: String
@@ -2062,6 +2264,57 @@ extension ReleaseManagementRootView {
         model.releaseStep = item.step
     }
 
+        private func setPullRequestContext(_ pr: PullRequestInfo) {
+        model.prInfo = pr
+        if !pr.headRef.isEmpty {
+            model.branchName = pr.headRef
+        }
+        model.prTitle = pr.title
+        model.prBody = pr.body
+        model.branchCreated = true
+        model.branchPushed = true
+        model.prMerged = false
+        model.releaseStep = .mergePR
+    }
+
+private func applyPullRequestContext(_ pr: PullRequestInfo) {
+        model.prInfo = pr
+        if !pr.headRef.isEmpty {
+            model.branchName = pr.headRef
+        }
+        model.prTitle = pr.title
+        model.prBody = pr.body
+        model.branchCreated = true
+        model.branchPushed = true
+        model.prMerged = false
+        model.releaseStep = .mergePR
+        runAction(message: "Loading checks...", successMessage: "Checks loaded.") {
+            let repo = try resolveGitHubRepo()
+            let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: pr.headSha)
+            DispatchQueue.main.async {
+                model.checksSummary = summary
+                applyChecksStatus(summary)
+            }
+        }
+    }
+
+    private func loadExistingPullRequest() {
+        guard let existing = model.existingPRInfo else { return }
+        applyPullRequestContext(existing)
+    }
+
+    private func loadPullRequest(_ pr: PullRequestInfo) {
+        applyPullRequestContext(pr)
+    }
+
+    private func startNewWorkflow() {
+        model.prInfo = nil
+        model.checksSummary = nil
+        model.prMerged = false
+        model.branchDeleted = false
+        model.releaseStep = .createBranch
+    }
+
     private func syncReleaseStepToProgress() {
         if let nextStep = ReleasePrepStep.allCases.first(where: { !isStepCompleted($0) }) {
             model.releaseStep = nextStep
@@ -2125,6 +2378,17 @@ extension ReleaseManagementRootView {
     private func refreshStatus() {
         runAction(message: "Refreshing status...", successMessage: "Status refreshed.") {
             let status = buildSystemStatus()
+            let openPRs = status.githubTokenPresent ? fetchOpenPullRequests(limit: 100) : []
+            let existingPR: PullRequestInfo?
+            if status.githubTokenPresent,
+               !status.currentBranch.isEmpty,
+               status.currentBranch != "-",
+               status.currentBranch != status.defaultBaseBranch {
+                let directMatch = fetchExistingPullRequest(branch: status.currentBranch)
+                existingPR = directMatch ?? matchOpenPullRequest(branch: status.currentBranch, openPRs: openPRs)
+            } else {
+                existingPR = nil
+            }
             DispatchQueue.main.async {
                 model.systemStatus = status
                 if model.newVersion.isEmpty {
@@ -2146,6 +2410,8 @@ extension ReleaseManagementRootView {
                     model.branchCreated = true
                     model.branchPushed = true
                 }
+                model.openPullRequests = openPRs
+                model.existingPRInfo = existingPR
                 syncReleaseStepToProgress()
             }
         }
@@ -2325,12 +2591,35 @@ extension ReleaseManagementRootView {
     }
 
     private func createPullRequest() {
-        runAction(message: "Creating pull request...", successMessage: "Pull request created successfully.") {
+        runAction(message: "Creating pull request...", successMessage: "Pull request ready.") {
             let repo = try resolveGitHubRepo()
             let branch = model.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
             let title = model.prTitle.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !branch.isEmpty else { throw ReleaseActionError("Branch name is empty.") }
             guard !title.isEmpty else { throw ReleaseActionError("PR title is empty.") }
+            if let existing = fetchExistingPullRequest(branch: branch) {
+                DispatchQueue.main.async {
+                    setPullRequestContext(existing)
+                }
+                let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: existing.headSha)
+                DispatchQueue.main.async {
+                    model.checksSummary = summary
+                    applyChecksStatus(summary)
+                }
+                return
+            }
+            let openPRs = fetchOpenPullRequests(limit: 100)
+            if let existing = matchOpenPullRequest(branch: branch, openPRs: openPRs) {
+                DispatchQueue.main.async {
+                    setPullRequestContext(existing)
+                }
+                let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: existing.headSha)
+                DispatchQueue.main.async {
+                    model.checksSummary = summary
+                    applyChecksStatus(summary)
+                }
+                return
+            }
             let base = model.systemStatus.defaultBaseBranch
             let body = [
                 "title": title,
@@ -2339,7 +2628,38 @@ extension ReleaseManagementRootView {
                 "body": model.prBody
             ]
             let payload = try JSONSerialization.data(withJSONObject: body, options: [])
-            let data = try runGitHubRequest(method: "POST", path: "/repos/\(repo.owner)/\(repo.name)/pulls", body: payload)
+            let data: Data
+            do {
+                data = try runGitHubRequest(method: "POST", path: "/repos/\(repo.owner)/\(repo.name)/pulls", body: payload)
+            } catch {
+                let description = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
+                if description.localizedCaseInsensitiveContains("already exists") {
+                    if let existing = fetchExistingPullRequest(branch: branch) {
+                        DispatchQueue.main.async {
+                            setPullRequestContext(existing)
+                        }
+                        let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: existing.headSha)
+                        DispatchQueue.main.async {
+                            model.checksSummary = summary
+                            applyChecksStatus(summary)
+                        }
+                        return
+                    }
+                    let openPRs = fetchOpenPullRequests(limit: 100)
+                    if let existing = matchOpenPullRequest(branch: branch, openPRs: openPRs) {
+                        DispatchQueue.main.async {
+                            setPullRequestContext(existing)
+                        }
+                        let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: existing.headSha)
+                        DispatchQueue.main.async {
+                            model.checksSummary = summary
+                            applyChecksStatus(summary)
+                        }
+                        return
+                    }
+                }
+                throw error
+            }
             guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
                 throw ReleaseActionError("Failed to parse PR response.")
             }
@@ -2351,8 +2671,9 @@ extension ReleaseManagementRootView {
             let mergeableState = json["mergeable_state"] as? String
             let checks = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: head)
             DispatchQueue.main.async {
-                model.prInfo = PullRequestInfo(number: number, url: url, headSha: head, state: state, mergeable: mergeable, mergeableState: mergeableState)
+                model.prInfo = PullRequestInfo(number: number, url: url, headSha: head, headRef: branch, title: title, body: model.prBody, state: state, mergeable: mergeable, mergeableState: mergeableState)
                 model.checksSummary = checks
+                applyChecksStatus(checks)
                 syncReleaseStepToProgress()
             }
         }
@@ -2365,6 +2686,7 @@ extension ReleaseManagementRootView {
             let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: pr.headSha)
             DispatchQueue.main.async {
                 model.checksSummary = summary
+                applyChecksStatus(summary)
             }
         }
     }
@@ -2374,7 +2696,8 @@ extension ReleaseManagementRootView {
             guard let pr = model.prInfo else { throw ReleaseActionError("PR not found.") }
             let repo = try resolveGitHubRepo()
             let checks = model.checksSummary?.state ?? "unknown"
-            guard checks == "success" || checks == "none" else { throw ReleaseActionError("Checks not green. Merge blocked.") }
+            let overrideOk = model.allowMergeDespiteChecks && checks == "failure"
+            guard checks == "success" || checks == "none" || overrideOk else { throw ReleaseActionError("Checks not green. Merge blocked.") }
             let payload = try JSONSerialization.data(withJSONObject: ["merge_method": "squash"], options: [])
             _ = try runGitHubRequest(method: "PUT", path: "/repos/\(repo.owner)/\(repo.name)/pulls/\(pr.number)/merge", body: payload)
             DispatchQueue.main.async {
@@ -2472,6 +2795,44 @@ extension ReleaseManagementRootView {
             return "Verify scripts/sync_changelog.py exists and rerun."
         }
         return "Review the error details, fix the underlying issue, and retry the step."
+    }
+
+    private func applyChecksStatus(_ summary: ChecksSummary) {
+        model.allowMergeDespiteChecks = false
+        let state = summary.state
+        switch state {
+        case "success":
+            model.statusLevel = .ok
+            model.statusMessage = "Checks are green."
+            model.lastSuccessMessage = "GitHub checks passed."
+            model.lastError = ""
+            model.lastErrorFix = ""
+        case "failure":
+            let count = summary.failingChecks.count
+            let countText = count == 1 ? "1 check" : "\(count) checks"
+            model.statusLevel = .error
+            model.statusMessage = "GitHub reports \(countText) failing."
+            model.lastError = "GitHub returned \(countText) failing: \(summary.failingChecks.joined(separator: ", "))."
+            model.lastErrorFix = "Open GitHub, resolve the \(countText), and refresh checks."
+        case "pending":
+            let count = summary.pendingChecks.count
+            let countText = count == 1 ? "1 check" : "\(count) checks"
+            model.statusLevel = .warning
+            model.statusMessage = "GitHub checks are pending."
+            model.lastSuccessMessage = "Checks refreshed."
+            model.lastError = count > 0 ? "GitHub reports \(countText) still running: \(summary.pendingChecks.joined(separator: ", "))." : "Checks still running."
+            model.lastErrorFix = "Wait for checks to finish, then refresh."
+        case "none":
+            model.statusLevel = .info
+            model.statusMessage = "No checks configured."
+            model.lastSuccessMessage = "Checks refreshed (none configured)."
+            model.lastError = ""
+            model.lastErrorFix = ""
+        default:
+            model.statusLevel = .warning
+            model.statusMessage = "Checks status unknown."
+            model.lastSuccessMessage = "Checks refreshed."
+        }
     }
 
     private func buildSystemStatus() -> ReleaseSystemStatus {
@@ -2618,6 +2979,84 @@ extension ReleaseManagementRootView {
         return (nil, "Missing")
     }
 
+
+    private func fetchExistingPullRequest(branch: String) -> PullRequestInfo? {
+        guard let repo = try? resolveGitHubRepo() else { return nil }
+        let head = "\(repo.owner):\(branch)"
+        var allowed = CharacterSet.urlQueryAllowed
+        allowed.remove(charactersIn: ":/")
+        let encodedHead = head.addingPercentEncoding(withAllowedCharacters: allowed) ?? head
+        if let data = try? runGitHubRequest(
+            method: "GET",
+            path: "/repos/\(repo.owner)/\(repo.name)/pulls?head=\(encodedHead)&state=open&per_page=1",
+            body: nil
+        ),
+        let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+        let first = json.first {
+            let number = first["number"] as? Int ?? 0
+            let url = first["html_url"] as? String ?? ""
+            let title = first["title"] as? String ?? ""
+            let body = first["body"] as? String ?? ""
+            let headInfo = first["head"] as? [String: Any] ?? [:]
+            let headSha = headInfo["sha"] as? String ?? ""
+            let headRef = headInfo["ref"] as? String ?? ""
+            let state = first["state"] as? String ?? ""
+            let mergeable = first["mergeable"] as? Bool
+            let mergeableState = first["mergeable_state"] as? String
+            return PullRequestInfo(number: number, url: url, headSha: headSha, headRef: headRef, title: title, body: body, state: state, mergeable: mergeable, mergeableState: mergeableState)
+        }
+        let openPRs = fetchOpenPullRequests(limit: 100)
+        return matchOpenPullRequest(branch: branch, openPRs: openPRs)
+    }
+
+
+    private func fetchOpenPullRequests(limit: Int) -> [PullRequestInfo] {
+        guard let repo = try? resolveGitHubRepo() else { return [] }
+        let pageSize = min(max(limit, 1), 100)
+        let maxPages = 5
+        var results: [PullRequestInfo] = []
+        var page = 1
+        while results.count < limit && page <= maxPages {
+            guard let data = try? runGitHubRequest(
+                method: "GET",
+                path: "/repos/\(repo.owner)/\(repo.name)/pulls?state=open&per_page=\(pageSize)&page=\(page)",
+                body: nil
+            ) else { break }
+            guard let json = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { break }
+            if json.isEmpty { break }
+            let batch: [PullRequestInfo] = json.compactMap { pr in
+                let number = pr["number"] as? Int ?? 0
+                let url = pr["html_url"] as? String ?? ""
+                let title = pr["title"] as? String ?? ""
+                let body = pr["body"] as? String ?? ""
+                let headInfo = pr["head"] as? [String: Any] ?? [:]
+                let headSha = headInfo["sha"] as? String ?? ""
+                let headRef = headInfo["ref"] as? String ?? ""
+                let state = pr["state"] as? String ?? ""
+                let mergeable = pr["mergeable"] as? Bool
+                let mergeableState = pr["mergeable_state"] as? String
+                return PullRequestInfo(number: number, url: url, headSha: headSha, headRef: headRef, title: title, body: body, state: state, mergeable: mergeable, mergeableState: mergeableState)
+            }
+            results.append(contentsOf: batch)
+            if batch.count < pageSize { break }
+            page += 1
+        }
+        if results.count > limit {
+            return Array(results.prefix(limit))
+        }
+        return results
+    }
+
+
+    private func matchOpenPullRequest(branch: String, openPRs: [PullRequestInfo]) -> PullRequestInfo? {
+        let normalized = branch
+            .replacingOccurrences(of: "refs/heads/", with: "")
+            .replacingOccurrences(of: "heads/", with: "")
+        return openPRs.first(where: { pr in
+            pr.headRef == branch || pr.headRef == normalized
+        })
+    }
+
     private func fetchChecksSummary(owner: String, repo: String, headSha: String) throws -> ChecksSummary {
         let statusData = try runGitHubRequest(
             method: "GET",
@@ -2639,14 +3078,18 @@ extension ReleaseManagementRootView {
         let totalRuns = (checksJson?["total_count"] as? Int) ?? checkRuns.count
 
         let pendingRuns = checkRuns.filter { ($0["status"] as? String) != "completed" }
-        let conclusions = checkRuns.compactMap { $0["conclusion"] as? String }
-        let failed = conclusions.contains { ["failure", "cancelled", "timed_out", "action_required"].contains($0) }
+        let pendingNames = pendingRuns.compactMap { $0["name"] as? String }
+        let failedRuns = checkRuns.filter {
+            let conclusion = $0["conclusion"] as? String ?? ""
+            return ["failure", "cancelled", "timed_out", "action_required"].contains(conclusion)
+        }
+        let failedNames = failedRuns.compactMap { $0["name"] as? String }
 
         var finalState = statusState
         if totalRuns > 0 {
             if !pendingRuns.isEmpty {
                 finalState = "pending"
-            } else if failed {
+            } else if !failedRuns.isEmpty {
                 finalState = "failure"
             } else {
                 finalState = "success"
@@ -2664,7 +3107,12 @@ extension ReleaseManagementRootView {
             parts.append("Statuses: " + statusContexts.joined(separator: ", "))
         }
         let description = parts.isEmpty ? "No checks reported yet." : parts.joined(separator: " • ")
-        return ChecksSummary(state: finalState, description: description)
+        return ChecksSummary(state: finalState,
+                             description: description,
+                             failingChecks: failedNames,
+                             pendingChecks: pendingNames,
+                             totalChecks: totalRuns,
+                             totalStatuses: statusContexts.count)
     }
 
     private func runGitHubRequest(method: String, path: String, body: Data?) throws -> Data {
