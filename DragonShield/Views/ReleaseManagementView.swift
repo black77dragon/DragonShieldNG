@@ -501,16 +501,20 @@ private struct ReleaseWorkflowDetailView: View {
                 }
                 ScrollView {
                     VStack(alignment: .leading, spacing: DSLayout.spaceM) {
-                        ReleaseProgressStatusCanvas(summary: progressSummary,
-                                                    successMessage: model.lastSuccessMessage,
-                                                    errorMessage: model.lastError,
-                                                    errorFix: model.lastErrorFix,
-                                                    level: model.statusLevel,
-                                                    isRunning: model.isRunning,
-                                                    systemStatus: model.systemStatus)
+                        framedSection {
+                            ReleaseProgressStatusCanvas(summary: progressSummary,
+                                                        successMessage: model.lastSuccessMessage,
+                                                        errorMessage: model.lastError,
+                                                        errorFix: model.lastErrorFix,
+                                                        level: model.statusLevel,
+                                                        isRunning: model.isRunning,
+                                                        systemStatus: model.systemStatus)
+                        }
                         releaseStepsList
-                        currentStepContent
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        framedSection(title: "Process information") {
+                            currentStepContent
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -770,6 +774,8 @@ private struct ReleaseWorkflowDetailView: View {
         let canTag = model.systemStatus.isClean && !model.systemStatus.version.isEmpty
         let canSync = !model.systemStatus.changelogScriptPath.isEmpty && !model.systemStatus.pythonVersion.isEmpty
         let prReady = model.prInfo != nil
+        let checksState = model.checksSummary?.state ?? "unknown"
+        let checksOk = checksState == "success" || checksState == "none"
         switch step {
         case .checkStatus:
             Button("Refresh") { onRefreshStatus() }
@@ -798,7 +804,7 @@ private struct ReleaseWorkflowDetailView: View {
         case .mergePR:
             Button("Merge") { onMergePR() }
                 .buttonStyle(.borderedProminent)
-                .disabled(isRunning || !prReady || model.checksSummary?.state != "success")
+                .disabled(isRunning || !prReady || !checksOk)
         case .deleteBranch:
             Button("Delete") { onDeleteBranch() }
                 .buttonStyle(.bordered)
@@ -1348,7 +1354,7 @@ private struct ReleaseWorkflowDetailView: View {
 
     private var branchMergeView: some View {
         let checksState = model.checksSummary?.state ?? "unknown"
-        let checksOk = checksState == "success"
+        let checksOk = checksState == "success" || checksState == "none"
         let branchRequired = needsBranchSteps
         return VStack(alignment: .leading, spacing: DSLayout.spaceM) {
             workflowInfoCard(title: "What this does", lines: [
@@ -1362,7 +1368,8 @@ private struct ReleaseWorkflowDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
-                StatusPill(level: checksOk ? .ok : .warning, text: "CHECKS: \(checksState.uppercased())")
+                let checksLevel: StatusLevel = checksState == "success" ? .ok : (checksState == "none" ? .info : .warning)
+                StatusPill(level: checksLevel, text: "CHECKS: \(checksState.uppercased())")
                 if let summary = model.checksSummary {
                     Text(summary.description)
                         .font(.caption)
@@ -1387,7 +1394,8 @@ private struct ReleaseWorkflowDetailView: View {
                     .disabled(model.isRunning || !canAdvanceReleaseStep)
                 }
                 if branchRequired && !model.prMerged {
-                    BlockerHint(text: checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge.")
+                    let blocker = checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge."
+                    BlockerHint(text: blocker)
                 }
                 if model.prMerged {
                     Text("Merged successfully.")
@@ -1435,6 +1443,20 @@ private struct ReleaseWorkflowDetailView: View {
                 }
             }
         }
+    }
+
+    private func framedSection<Content: View>(title: String? = nil,
+                                             @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DSLayout.spaceS) {
+            if let title {
+                Text(title)
+                    .font(.headline)
+            }
+            content()
+        }
+        .padding(DSLayout.spaceM)
+        .background(RoundedRectangle(cornerRadius: DSLayout.radiusL).fill(Surface.secondary))
+        .overlay(RoundedRectangle(cornerRadius: DSLayout.radiusL).stroke(Color.secondary.opacity(0.35), lineWidth: 1))
     }
 
     private func workflowInfoCard(title: String, lines: [String]) -> some View {
@@ -2114,6 +2136,16 @@ extension ReleaseManagementRootView {
                 if status.isClean {
                     model.dirtyWorkspaceAcknowledged = false
                 }
+                if !status.currentBranch.isEmpty,
+                   status.currentBranch != "-",
+                   status.currentBranch != status.defaultBaseBranch,
+                   status.upstreamBranch != "-" {
+                    if model.branchName.isEmpty {
+                        model.branchName = status.currentBranch
+                    }
+                    model.branchCreated = true
+                    model.branchPushed = true
+                }
                 syncReleaseStepToProgress()
             }
         }
@@ -2342,7 +2374,7 @@ extension ReleaseManagementRootView {
             guard let pr = model.prInfo else { throw ReleaseActionError("PR not found.") }
             let repo = try resolveGitHubRepo()
             let checks = model.checksSummary?.state ?? "unknown"
-            guard checks == "success" else { throw ReleaseActionError("Checks not green. Merge blocked.") }
+            guard checks == "success" || checks == "none" else { throw ReleaseActionError("Checks not green. Merge blocked.") }
             let payload = try JSONSerialization.data(withJSONObject: ["merge_method": "squash"], options: [])
             _ = try runGitHubRequest(method: "PUT", path: "/repos/\(repo.owner)/\(repo.name)/pulls/\(pr.number)/merge", body: payload)
             DispatchQueue.main.async {
@@ -2587,19 +2619,52 @@ extension ReleaseManagementRootView {
     }
 
     private func fetchChecksSummary(owner: String, repo: String, headSha: String) throws -> ChecksSummary {
-        let data = try runGitHubRequest(
+        let statusData = try runGitHubRequest(
             method: "GET",
             path: "/repos/\(owner)/\(repo)/commits/\(headSha)/status",
             body: nil
         )
-        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-            throw ReleaseActionError("Failed to parse checks response.")
+        let statusJson = try JSONSerialization.jsonObject(with: statusData) as? [String: Any]
+        let statusState = (statusJson?["state"] as? String) ?? "unknown"
+        let statuses = statusJson?["statuses"] as? [[String: Any]] ?? []
+        let statusContexts = statuses.compactMap { $0["context"] as? String }
+
+        let checksData = try runGitHubRequest(
+            method: "GET",
+            path: "/repos/\(owner)/\(repo)/commits/\(headSha)/check-runs?per_page=100",
+            body: nil
+        )
+        let checksJson = try JSONSerialization.jsonObject(with: checksData) as? [String: Any]
+        let checkRuns = checksJson?["check_runs"] as? [[String: Any]] ?? []
+        let totalRuns = (checksJson?["total_count"] as? Int) ?? checkRuns.count
+
+        let pendingRuns = checkRuns.filter { ($0["status"] as? String) != "completed" }
+        let conclusions = checkRuns.compactMap { $0["conclusion"] as? String }
+        let failed = conclusions.contains { ["failure", "cancelled", "timed_out", "action_required"].contains($0) }
+
+        var finalState = statusState
+        if totalRuns > 0 {
+            if !pendingRuns.isEmpty {
+                finalState = "pending"
+            } else if failed {
+                finalState = "failure"
+            } else {
+                finalState = "success"
+            }
+        } else if statusContexts.isEmpty {
+            finalState = "none"
         }
-        let state = (json["state"] as? String) ?? "unknown"
-        let statuses = json["statuses"] as? [[String: Any]] ?? []
-        let contexts = statuses.compactMap { $0["context"] as? String }
-        let description = contexts.isEmpty ? "No checks reported yet." : "Checks: " + contexts.joined(separator: ", ")
-        return ChecksSummary(state: state, description: description)
+
+        let runNames = checkRuns.compactMap { $0["name"] as? String }
+        var parts: [String] = []
+        if !runNames.isEmpty {
+            parts.append("Checks: " + runNames.joined(separator: ", "))
+        }
+        if !statusContexts.isEmpty {
+            parts.append("Statuses: " + statusContexts.joined(separator: ", "))
+        }
+        let description = parts.isEmpty ? "No checks reported yet." : parts.joined(separator: " • ")
+        return ChecksSummary(state: finalState, description: description)
     }
 
     private func runGitHubRequest(method: String, path: String, body: Data?) throws -> Data {
