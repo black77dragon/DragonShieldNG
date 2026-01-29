@@ -177,6 +177,28 @@ private enum SpineStatus {
     }
 }
 
+private enum ReleaseStepStatus {
+    case notStarted
+    case inProgress
+    case completed
+
+    var symbolName: String {
+        switch self {
+        case .notStarted: return "circle"
+        case .inProgress: return "circle.fill"
+        case .completed: return "checkmark.circle.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .notStarted: return .secondary
+        case .inProgress: return .blue
+        case .completed: return .green
+        }
+    }
+}
+
 private struct ReleaseSystemStatus {
     var repoRoot: URL?
     var repoPath: String = "Not found"
@@ -232,6 +254,9 @@ private final class ReleaseManagementModel: ObservableObject {
     @Published var statusMessage: String = "Idle"
     @Published var statusLevel: StatusLevel = .idle
     @Published var isRunning: Bool = false
+
+    @Published var lastSuccessMessage: String = ""
+    @Published var lastErrorFix: String = ""
 
     @Published var newVersion: String = ""
     @Published var branchName: String = ""
@@ -474,18 +499,23 @@ private struct ReleaseWorkflowDetailView: View {
                     }
                     Spacer()
                 }
-                ReleaseActionStatusView(level: model.statusLevel,
-                                        message: model.statusMessage,
-                                        isRunning: model.isRunning,
-                                        lastError: model.lastError)
                 ScrollView {
-                    currentStepContent
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: DSLayout.spaceM) {
+                        ReleaseProgressStatusCanvas(summary: progressSummary,
+                                                    successMessage: model.lastSuccessMessage,
+                                                    errorMessage: model.lastError,
+                                                    errorFix: model.lastErrorFix,
+                                                    level: model.statusLevel,
+                                                    isRunning: model.isRunning,
+                                                    systemStatus: model.systemStatus)
+                        releaseStepsList
+                        currentStepContent
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
             .padding(DSLayout.spaceM)
-            Divider()
-            ReleaseSystemStateBar(level: model.statusLevel, message: model.statusMessage)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
@@ -534,7 +564,12 @@ private struct ReleaseWorkflowDetailView: View {
     private var canAdvanceReleaseStep: Bool {
         switch model.releaseStep {
         case .checkStatus:
-            return canContinueCheckStatus
+            let prereqsMet = model.systemStatus.repoRoot != nil
+                && !model.systemStatus.gitVersion.isEmpty
+                && !model.systemStatus.pythonVersion.isEmpty
+                && !model.systemStatus.changelogScriptPath.isEmpty
+            if model.systemStatus.isClean { return prereqsMet }
+            return prereqsMet && model.dirtyWorkspaceAcknowledged
         case .createBranch:
             return !needsBranchSteps || model.branchCreated
         case .captureChanges:
@@ -605,6 +640,186 @@ private struct ReleaseWorkflowDetailView: View {
             return "Run the sync script before continuing."
         }
         return "Resolve the required items before continuing."
+    }
+
+    private var progressSummary: String {
+        if model.isRunning { return model.statusMessage }
+        if model.systemStatus.repoRoot == nil { return "Repository not found." }
+        if model.systemStatus.isClean { return "No local changes detected." }
+        let uncommitted = model.systemStatus.uncommittedCount
+        let untracked = model.systemStatus.untrackedCount
+        return "Local changes detected (\(uncommitted) uncommitted, \(untracked) untracked)."
+    }
+
+    private var stepFieldWidth: CGFloat { 260 }
+    private var stepActionWidth: CGFloat { 180 }
+
+    private var visibleReleaseSteps: [ReleasePrepStep] {
+        var steps: [ReleasePrepStep] = []
+        for step in ReleasePrepStep.allCases {
+            steps.append(step)
+            if !isStepCompleted(step) { break }
+        }
+        return steps
+    }
+
+    private func isStepCompleted(_ step: ReleasePrepStep) -> Bool {
+        switch step {
+        case .checkStatus:
+            let prereqsMet = model.systemStatus.repoRoot != nil
+                && !model.systemStatus.gitVersion.isEmpty
+                && !model.systemStatus.pythonVersion.isEmpty
+                && !model.systemStatus.changelogScriptPath.isEmpty
+            if model.systemStatus.isClean { return prereqsMet }
+            return prereqsMet && model.dirtyWorkspaceAcknowledged
+        case .createBranch:
+            return !needsBranchSteps || model.branchCreated
+        case .captureChanges:
+            return !needsBranchSteps || model.changesCaptured || model.changesCommitted || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .commitChanges:
+            return !needsBranchSteps || model.changesCommitted || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .pushBranch:
+            return !needsBranchSteps || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .openPR:
+            return !needsBranchSteps || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .mergePR:
+            return !needsBranchSteps || model.prMerged || model.branchDeleted
+        case .deleteBranch:
+            return !needsBranchSteps || model.branchDeleted
+        case .setRelease:
+            if model.isNewRelease { return model.versionWritten }
+            return model.systemStatus.versionMatchesTag && !model.systemStatus.version.isEmpty
+        case .createTag:
+            return model.tagCreated || model.systemStatus.versionMatchesTag
+        case .syncChangelog:
+            return model.changelogSynced
+        case .reviewFinish:
+            return model.changelogSynced
+        }
+    }
+
+    private func stepStatus(for step: ReleasePrepStep) -> ReleaseStepStatus {
+        if isStepCompleted(step) { return .completed }
+        if model.releaseStep == step { return .inProgress }
+        return .notStarted
+    }
+
+    private var releaseStepsList: some View {
+        VStack(alignment: .leading, spacing: DSLayout.spaceS) {
+            Text("Release steps")
+                .font(.headline)
+            ForEach(visibleReleaseSteps, id: \.self) { step in
+                ReleaseStepRow(status: stepStatus(for: step),
+                               number: step.rawValue + 1,
+                               title: step.spineTitle,
+                               instruction: step.headerDetail,
+                               fieldWidth: stepFieldWidth,
+                               actionWidth: stepActionWidth) {
+                    stepFields(for: step)
+                } action: {
+                    stepAction(for: step)
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func stepFields(for step: ReleasePrepStep) -> some View {
+        switch step {
+        case .checkStatus:
+            if !model.systemStatus.isClean {
+                Toggle("Acknowledge dirty workspace", isOn: $model.dirtyWorkspaceAcknowledged)
+                    .toggleStyle(.switch)
+            } else {
+                EmptyView()
+            }
+        case .createBranch:
+            TextField("Branch name", text: $model.branchName)
+                .textFieldStyle(.roundedBorder)
+        case .captureChanges:
+            Toggle("Include untracked files", isOn: $model.includeUntracked)
+                .toggleStyle(.switch)
+        case .commitChanges:
+            TextField("Commit message", text: $model.commitMessage)
+                .textFieldStyle(.roundedBorder)
+        case .openPR:
+            TextField("PR title", text: $model.prTitle)
+                .textFieldStyle(.roundedBorder)
+        case .setRelease:
+            TextField("Release number", text: $model.newVersion)
+                .textFieldStyle(.roundedBorder)
+        case .syncChangelog:
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Include GitHub data", isOn: $model.includeGitHubData)
+                    .toggleStyle(.switch)
+                Toggle("Dry run", isOn: $model.dryRun)
+                    .toggleStyle(.switch)
+            }
+        default:
+            EmptyView()
+        }
+    }
+
+    @ViewBuilder
+    private func stepAction(for step: ReleasePrepStep) -> some View {
+        let isRunning = model.isRunning
+        let canCreateBranch = model.systemStatus.repoRoot != nil && !model.systemStatus.gitVersion.isEmpty
+        let canStage = model.systemStatus.repoRoot != nil && !model.systemStatus.gitVersion.isEmpty
+        let canCommit = model.systemStatus.repoRoot != nil && !model.systemStatus.gitVersion.isEmpty
+        let canPush = model.systemStatus.originURL != "-" && model.systemStatus.repoRoot != nil && !model.systemStatus.gitVersion.isEmpty
+        let canTag = model.systemStatus.isClean && !model.systemStatus.version.isEmpty
+        let canSync = !model.systemStatus.changelogScriptPath.isEmpty && !model.systemStatus.pythonVersion.isEmpty
+        let prReady = model.prInfo != nil
+        switch step {
+        case .checkStatus:
+            Button("Refresh") { onRefreshStatus() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning)
+        case .createBranch:
+            Button("Create") { onCreateBranch() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || model.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !canCreateBranch)
+        case .captureChanges:
+            Button("Stage") { onCaptureChanges() }
+                .buttonStyle(.bordered)
+                .disabled(isRunning || !canStage || !model.branchCreated)
+        case .commitChanges:
+            Button("Commit") { onCommitChanges() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !canCommit || !model.changesCaptured || model.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .pushBranch:
+            Button("Push") { onPushBranch() }
+                .buttonStyle(.bordered)
+                .disabled(isRunning || !canPush || !model.changesCommitted)
+        case .openPR:
+            Button("Create PR") { onCreatePR() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !model.systemStatus.githubTokenPresent || model.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || model.prTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .mergePR:
+            Button("Merge") { onMergePR() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !prReady || model.checksSummary?.state != "success")
+        case .deleteBranch:
+            Button("Delete") { onDeleteBranch() }
+                .buttonStyle(.bordered)
+                .disabled(isRunning || model.branchName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !model.prMerged)
+        case .setRelease:
+            Button("Write VERSION") { onWriteVersion() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || model.newVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .createTag:
+            Button("Create Tag") { onCreateTag() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !canTag)
+        case .syncChangelog:
+            Button("Run Sync") { onSyncChangelog() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !canSync)
+        case .reviewFinish:
+            Button("Finish") { onAdvanceRelease() }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || !model.changelogSynced)
+        }
     }
 
     private var statusIssues: [StatusIssue] {
@@ -731,7 +946,6 @@ private struct ReleaseWorkflowDetailView: View {
                             isRunning: model.isRunning,
                             onSave: onSaveGitHubToken,
                             onClear: onClearGitHubToken)
-            SystemStatusCard(status: model.systemStatus)
             HStack {
                 Button("Refresh Status") {
                     onRefreshStatus()
@@ -1345,6 +1559,152 @@ private struct ReleaseActionStatusView: View {
     }
 }
 
+private struct ReleaseProgressStatusCanvas: View {
+    let summary: String
+    let successMessage: String
+    let errorMessage: String
+    let errorFix: String
+    let level: StatusLevel
+    let isRunning: Bool
+    let systemStatus: ReleaseSystemStatus
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                ReleaseProgressStatusTile(summary: summary,
+                                          successMessage: successMessage,
+                                          errorMessage: errorMessage,
+                                          errorFix: errorFix,
+                                          level: level,
+                                          isRunning: isRunning)
+                SystemStatusCard(status: systemStatus)
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                ReleaseProgressStatusTile(summary: summary,
+                                          successMessage: successMessage,
+                                          errorMessage: errorMessage,
+                                          errorFix: errorFix,
+                                          level: level,
+                                          isRunning: isRunning)
+                SystemStatusCard(status: systemStatus)
+            }
+        }
+    }
+}
+
+private struct ReleaseProgressStatusTile: View {
+    let summary: String
+    let successMessage: String
+    let errorMessage: String
+    let errorFix: String
+    let level: StatusLevel
+    let isRunning: Bool
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Current progress status")
+                .font(.headline)
+            HStack(spacing: 8) {
+                if isRunning {
+                    ProgressView()
+                        .scaleEffect(0.8)
+                } else {
+                    Image(systemName: levelSymbol)
+                        .foregroundStyle(level.color)
+                }
+                Text(summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if !successMessage.isEmpty && level == .ok {
+                Text("Success: \(successMessage)")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+            }
+            if !errorMessage.isEmpty {
+                Text("Error: \(errorMessage)")
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                if !errorFix.isEmpty {
+                    Text("Fix: \(errorFix)")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+        .padding(DSLayout.spaceM)
+        .background(RoundedRectangle(cornerRadius: DSLayout.radiusL).fill(Surface.secondary))
+    }
+
+    private var levelSymbol: String {
+        switch level {
+        case .ok: return "checkmark.circle.fill"
+        case .info: return "info.circle.fill"
+        case .warning: return "exclamationmark.triangle.fill"
+        case .error: return "xmark.octagon.fill"
+        case .running: return "clock.arrow.2.circlepath"
+        case .idle: return "circle"
+        }
+    }
+}
+
+private struct ReleaseStepRow<Fields: View, Action: View>: View {
+    let status: ReleaseStepStatus
+    let number: Int
+    let title: String
+    let instruction: String
+    let fieldWidth: CGFloat
+    let actionWidth: CGFloat
+    let fields: Fields
+    let action: Action
+
+    init(status: ReleaseStepStatus,
+         number: Int,
+         title: String,
+         instruction: String,
+         fieldWidth: CGFloat,
+         actionWidth: CGFloat,
+         @ViewBuilder fields: () -> Fields,
+         @ViewBuilder action: () -> Action) {
+        self.status = status
+        self.number = number
+        self.title = title
+        self.instruction = instruction
+        self.fieldWidth = fieldWidth
+        self.actionWidth = actionWidth
+        self.fields = fields()
+        self.action = action()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: status.symbolName)
+                .foregroundStyle(status.color)
+                .frame(width: 18, alignment: .leading)
+            Text("\(number).")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .frame(width: 24, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(title)
+                    .font(.subheadline)
+                    .bold()
+                Text(instruction)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            fields
+                .frame(width: fieldWidth, alignment: .leading)
+            action
+                .frame(width: actionWidth, alignment: .leading)
+        }
+        .padding(DSLayout.spaceS)
+        .background(RoundedRectangle(cornerRadius: DSLayout.radiusM).fill(Surface.secondary))
+    }
+}
+
+
 private struct StatusIssue: Identifiable {
     let id = UUID()
     let level: StatusLevel
@@ -1680,6 +2040,60 @@ extension ReleaseManagementRootView {
         model.releaseStep = item.step
     }
 
+    private func syncReleaseStepToProgress() {
+        if let nextStep = ReleasePrepStep.allCases.first(where: { !isStepCompleted($0) }) {
+            model.releaseStep = nextStep
+        }
+    }
+
+    private func isStepCompleted(_ step: ReleasePrepStep) -> Bool {
+        switch step {
+        case .checkStatus:
+            let prereqsMet = model.systemStatus.repoRoot != nil
+                && !model.systemStatus.gitVersion.isEmpty
+                && !model.systemStatus.pythonVersion.isEmpty
+                && !model.systemStatus.changelogScriptPath.isEmpty
+            if model.systemStatus.isClean { return prereqsMet }
+            return prereqsMet && model.dirtyWorkspaceAcknowledged
+        case .createBranch:
+            return !needsBranchSteps() || model.branchCreated
+        case .captureChanges:
+            return !needsBranchSteps() || model.changesCaptured || model.changesCommitted || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .commitChanges:
+            return !needsBranchSteps() || model.changesCommitted || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .pushBranch:
+            return !needsBranchSteps() || model.branchPushed || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .openPR:
+            return !needsBranchSteps() || model.prInfo != nil || model.prMerged || model.branchDeleted
+        case .mergePR:
+            return !needsBranchSteps() || model.prMerged || model.branchDeleted
+        case .deleteBranch:
+            return !needsBranchSteps() || model.branchDeleted
+        case .setRelease:
+            if model.isNewRelease { return model.versionWritten }
+            return model.systemStatus.versionMatchesTag && !model.systemStatus.version.isEmpty
+        case .createTag:
+            return model.tagCreated || model.systemStatus.versionMatchesTag
+        case .syncChangelog:
+            return model.changelogSynced
+        case .reviewFinish:
+            return model.changelogSynced
+        }
+    }
+
+    private func needsBranchSteps() -> Bool {
+        let status = model.systemStatus
+        if status.repoRoot == nil { return false }
+        if !status.isClean { return true }
+        return model.branchCreated
+            || model.changesCaptured
+            || model.changesCommitted
+            || model.branchPushed
+            || model.prInfo != nil
+            || model.prMerged
+            || model.branchDeleted
+    }
+
     private func advanceReleaseStep() {
         guard model.releaseStep.rawValue + 1 < ReleasePrepStep.allCases.count else { return }
         model.releaseStep = ReleasePrepStep(rawValue: model.releaseStep.rawValue + 1) ?? model.releaseStep
@@ -1687,7 +2101,7 @@ extension ReleaseManagementRootView {
 
 
     private func refreshStatus() {
-        runAction(message: "Refreshing status...") {
+        runAction(message: "Refreshing status...", successMessage: "Status refreshed.") {
             let status = buildSystemStatus()
             DispatchQueue.main.async {
                 model.systemStatus = status
@@ -1700,6 +2114,7 @@ extension ReleaseManagementRootView {
                 if status.isClean {
                     model.dirtyWorkspaceAcknowledged = false
                 }
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1728,7 +2143,7 @@ extension ReleaseManagementRootView {
     }
 
     private func captureChanges() {
-        runAction(message: "Staging changes...") {
+        runAction(message: "Staging changes...", successMessage: "Changes staged successfully.") {
             guard let root = model.systemStatus.repoRoot else {
                 throw ReleaseActionError("Repo root not found. Set the repo path override and refresh.")
             }
@@ -1743,6 +2158,7 @@ extension ReleaseManagementRootView {
                 model.changesCaptured = true
                 model.changesCommitted = false
                 model.stageMessage = "Staged \(lines.count) file(s)."
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1754,7 +2170,7 @@ extension ReleaseManagementRootView {
             version = version.trimmingCharacters(in: .whitespacesAndNewlines)
         }
         guard !version.isEmpty else { return }
-        runAction(message: "Writing VERSION...") {
+        runAction(message: "Writing VERSION...", successMessage: "VERSION updated successfully.") {
             guard let root = model.systemStatus.repoRoot else {
                 throw ReleaseActionError("Repo root not found. Set the repo path override and try again.")
             }
@@ -1769,12 +2185,13 @@ extension ReleaseManagementRootView {
                 model.newVersion = version
                 model.versionWritten = true
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
 
     private func createTag() {
-        runAction(message: "Creating tag...") {
+        runAction(message: "Creating tag...", successMessage: "Release tag created successfully.") {
             let version = model.systemStatus.version
             guard !version.isEmpty else {
                 throw ReleaseActionError("VERSION is empty.")
@@ -1788,12 +2205,13 @@ extension ReleaseManagementRootView {
                 model.tagCreated = true
                 model.lastTagAt = Date()
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
 
     private func syncChangelog() {
-        runAction(message: "Running changelog sync...") {
+        runAction(message: "Running changelog sync...", successMessage: "Changelog sync completed successfully.") {
             guard let script = resolveChangelogSyncScript() else {
                 throw ReleaseActionError("sync_changelog.py not found.")
             }
@@ -1807,6 +2225,7 @@ extension ReleaseManagementRootView {
                 model.lastSyncAt = Date()
                 model.changelogSynced = true
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1814,7 +2233,7 @@ extension ReleaseManagementRootView {
     private func createBranch() {
         let branch = model.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !branch.isEmpty else { return }
-        runAction(message: "Creating branch...") {
+        runAction(message: "Creating branch...", successMessage: "Branch created successfully.") {
             guard model.systemStatus.repoRoot != nil else {
                 throw ReleaseActionError("Repo root not found. Set the repo path override and refresh.")
             }
@@ -1830,6 +2249,7 @@ extension ReleaseManagementRootView {
                 model.branchDeleted = false
                 model.stageMessage = ""
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1837,7 +2257,7 @@ extension ReleaseManagementRootView {
     private func commitChanges() {
         let message = model.commitMessage.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !message.isEmpty else { return }
-        runAction(message: "Committing changes...") {
+        runAction(message: "Committing changes...", successMessage: "Changes committed successfully.") {
             guard model.systemStatus.repoRoot != nil else {
                 throw ReleaseActionError("Repo root not found. Set the repo path override and refresh.")
             }
@@ -1850,6 +2270,7 @@ extension ReleaseManagementRootView {
                 model.changesCommitted = true
                 model.changesCaptured = false
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1857,7 +2278,7 @@ extension ReleaseManagementRootView {
     private func pushBranch() {
         let branch = model.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !branch.isEmpty else { return }
-        runAction(message: "Pushing branch...") {
+        runAction(message: "Pushing branch...", successMessage: "Branch pushed successfully.") {
             guard model.systemStatus.originURL != "-" else {
                 throw ReleaseActionError("Origin remote not found. Add an origin remote before pushing.")
             }
@@ -1866,12 +2287,13 @@ extension ReleaseManagementRootView {
             DispatchQueue.main.async {
                 model.branchPushed = true
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
 
     private func createPullRequest() {
-        runAction(message: "Creating pull request...") {
+        runAction(message: "Creating pull request...", successMessage: "Pull request created successfully.") {
             let repo = try resolveGitHubRepo()
             let branch = model.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
             let title = model.prTitle.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1899,12 +2321,13 @@ extension ReleaseManagementRootView {
             DispatchQueue.main.async {
                 model.prInfo = PullRequestInfo(number: number, url: url, headSha: head, state: state, mergeable: mergeable, mergeableState: mergeableState)
                 model.checksSummary = checks
+                syncReleaseStepToProgress()
             }
         }
     }
 
     private func refreshPullRequestChecks() {
-        runAction(message: "Refreshing checks...") {
+        runAction(message: "Refreshing checks...", successMessage: "Checks refreshed successfully.") {
             guard let pr = model.prInfo else { throw ReleaseActionError("PR not found.") }
             let repo = try resolveGitHubRepo()
             let summary = try fetchChecksSummary(owner: repo.owner, repo: repo.name, headSha: pr.headSha)
@@ -1915,7 +2338,7 @@ extension ReleaseManagementRootView {
     }
 
     private func mergePullRequest() {
-        runAction(message: "Merging PR (squash)...") {
+        runAction(message: "Merging PR (squash)...", successMessage: "Pull request merged successfully.") {
             guard let pr = model.prInfo else { throw ReleaseActionError("PR not found.") }
             let repo = try resolveGitHubRepo()
             let checks = model.checksSummary?.state ?? "unknown"
@@ -1924,6 +2347,7 @@ extension ReleaseManagementRootView {
             _ = try runGitHubRequest(method: "PUT", path: "/repos/\(repo.owner)/\(repo.name)/pulls/\(pr.number)/merge", body: payload)
             DispatchQueue.main.async {
                 model.prMerged = true
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1931,12 +2355,13 @@ extension ReleaseManagementRootView {
     private func deleteBranch() {
         let branch = model.branchName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !branch.isEmpty else { return }
-        runAction(message: "Deleting branch...") {
+        runAction(message: "Deleting branch...", successMessage: "Branch deleted successfully.") {
             _ = try runGit(["push", "origin", "--delete", branch], root: model.systemStatus.repoRoot)
             let updated = buildSystemStatus()
             DispatchQueue.main.async {
                 model.branchDeleted = true
                 model.systemStatus = updated
+                syncReleaseStepToProgress()
             }
         }
     }
@@ -1957,30 +2382,64 @@ private struct GitHubRepo {
 }
 
 extension ReleaseManagementRootView {
-    private func runAction(message: String, work: @escaping () throws -> Void) {
+    
+    private func runAction(message: String,
+                           successMessage: String,
+                           failureFix: String? = nil,
+                           work: @escaping () throws -> Void) {
         guard !model.isRunning else { return }
         model.isRunning = true
         model.statusMessage = message
         model.statusLevel = .running
         model.lastError = ""
+        model.lastErrorFix = ""
+        model.lastSuccessMessage = ""
         DispatchQueue.global(qos: .userInitiated).async {
             do {
                 try work()
                 DispatchQueue.main.async {
-                    model.statusMessage = "Done."
+                    model.statusMessage = successMessage
                     model.statusLevel = .ok
+                    model.lastSuccessMessage = successMessage
                     model.isRunning = false
                 }
             } catch {
                 let description = (error as? LocalizedError)?.errorDescription ?? error.localizedDescription
                 DispatchQueue.main.async {
-                    model.statusMessage = "Failed: \(description)"
+                    model.statusMessage = "Action failed."
                     model.statusLevel = .error
                     model.lastError = description
+                    model.lastErrorFix = failureFix ?? suggestFix(for: description)
                     model.isRunning = false
                 }
             }
         }
+    }
+
+    private func suggestFix(for message: String) -> String {
+        let lower = message.lowercased()
+        if lower.contains("repo root") || lower.contains("repo path") {
+            return "Set the repo path override and refresh the status."
+        }
+        if lower.contains("origin remote") {
+            return "Add an origin remote in git before retrying."
+        }
+        if lower.contains("token") {
+            return "Provide a GitHub token in Release Management or set GITHUB_TOKEN."
+        }
+        if lower.contains("python") {
+            return "Install Python 3 and restart the app."
+        }
+        if lower.contains("git") && lower.contains("missing") {
+            return "Install Git (Xcode Command Line Tools) and restart the app."
+        }
+        if lower.contains("workspace") && lower.contains("clean") {
+            return "Commit or stash local changes, then retry."
+        }
+        if lower.contains("changelog") || lower.contains("sync") {
+            return "Verify scripts/sync_changelog.py exists and rerun."
+        }
+        return "Review the error details, fix the underlying issue, and retry the step."
     }
 
     private func buildSystemStatus() -> ReleaseSystemStatus {
