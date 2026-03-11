@@ -1496,7 +1496,8 @@ private struct ReleaseWorkflowDetailView: View {
                     .disabled(model.isRunning || !canAdvanceReleaseStep)
                 }
                 if branchRequired && !model.prMerged {
-                    BlockerHint(text: checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge.")
+                    let blocker = checksOk ? "Merge the PR before continuing." : "Checks must pass before you can merge."
+                    BlockerHint(text: blocker)
                 }
                 if model.prMerged {
                     Text("Merged successfully.")
