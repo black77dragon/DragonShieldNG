@@ -11,11 +11,9 @@ When applicable, include the feature reference ID and implementation date in ISO
 
 ## [Unreleased]
 
-### Changed
-- [DS-099] Trading Profile Coordinate Slider Contrast Upgrade (implemented 2026-01-28)
+## [1.52.0] - 2026-01-28
 
-### Fixed
-- [DS-100] Price Update Manual Mode Not Persisting (implemented 2026-01-28)
+## [1.51.0] - 2026-01-28
 
 ## [1.46.0] - 2026-01-27
 
@@ -153,7 +151,7 @@ When applicable, include the feature reference ID and implementation date in ISO
 
 ### Fixed
 - [DS-059] Align Risk Report Portfolio Risk Score with Dashboard (implemented 2025-12-14)
-- [DS-001] Fix Instrument Edit Save Button (implemented 2025-12-14) (#1080)
+- [DS-001] Fix Instrument Edit Save Button (implemented 2025-12-14)
 
 ## [1.29.0] - 2025-12-13
 
@@ -211,7 +209,7 @@ When applicable, include the feature reference ID and implementation date in ISO
 
 ### Changed
 - [DS-013] Move Transactions to Portfolio Sidebar (implemented 2025-11-25)
-- [DS-010] Improve contrast in Edit Instrument GUI (change white fields to light grey) (implemented 2025-11-25) (#1080)
+- [DS-010] Improve contrast in Edit Instrument GUI (change white fields to light grey) (implemented 2025-11-25)
 - [DS-011] Rename Accounts Update Dialog (implemented 2025-11-25)
 - [DS-015] Rename Asset Classes Navigation & Tabs (implemented 2025-11-25)
 - [DS-016] Update DragonShield Logo (implemented 2025-11-25)
